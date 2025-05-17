@@ -117,27 +117,19 @@ def add_log(message, level="INFO"):
     else:
         logger.info(message)
 
-def get_directory_html():
-    """Generate HTML for directory selection"""
-    return """
-    <input type="file" webkitdirectory directory id="dirpicker" style="display: none;" onchange="updatePath()">
-    <button onclick="document.getElementById('dirpicker').click();" 
-        style="background-color: #1e90ff; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: pointer;">
-        Browse...
-    </button>
-    <script>
-    function updatePath() {
-        const input = document.getElementById('dirpicker');
-        if (input.files.length > 0) {
-            const path = input.files[0].webkitRelativePath.split('/')[0];
-            document.getElementById('selected-dir').value = path;
-            // Notify Streamlit that the value has changed
-            const event = new Event('input', { bubbles: true });
-            document.getElementById('selected-dir').dispatchEvent(event);
-        }
+def select_directory():
+    """Provides directory selection options"""
+    # Common directories to offer as quick options
+    home_dir = os.path.expanduser("~")
+    
+    options = {
+        "Downloads": os.path.join(home_dir, "Downloads"),
+        "Documents": os.path.join(home_dir, "Documents"),
+        "Desktop": os.path.join(home_dir, "Desktop"),
+        "Custom Location": "custom"
     }
-    </script>
-    """
+    
+    return options
 
 # Header with logo
 col1, col2 = st.columns([1, 5])
@@ -160,21 +152,33 @@ m3u8_files = st.file_uploader(
 
 # Output directory selection
 st.markdown("### Output Directory")
-col1, col2 = st.columns([1, 3])
+    
+# Get directory options
+dir_options = select_directory()
+
+# Create two columns
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.markdown('<div class="directory-picker">', unsafe_allow_html=True)
-    st.markdown(get_directory_html(), unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with col2:
-    # Default to a user's downloads folder if possible
-    default_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-    output_dir = st.text_input(
-        "Save location",
-        value=default_downloads,
-        key="selected-dir"
+    # Dropdown for predefined locations
+    selected_option = st.selectbox(
+        "Choose location",
+        options=list(dir_options.keys()),
+        index=0
     )
+
+# Handle custom directory input
+if selected_option == "Custom Location":
+    custom_dir = st.text_input(
+        "Enter custom directory path",
+        value=os.path.expanduser("~")
+    )
+    output_dir = custom_dir
+else:
+    output_dir = dir_options[selected_option]
+
+# Display selected path and ensure it exists
+st.text_input("Selected directory", value=output_dir, disabled=True)
 
 # Ensure output directory exists
 if output_dir:
