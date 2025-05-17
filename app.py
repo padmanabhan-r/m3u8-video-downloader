@@ -1,6 +1,12 @@
-import streamlit as st
+import sys
+
+# Ensure Streamlit is available
+try:
+    import streamlit as st
+except ModuleNotFoundError:
+    sys.exit("Error: Streamlit is not installed. Please install it with 'pip install streamlit' and try again.")
+
 import subprocess
-import tempfile
 import os
 import time
 import base64
@@ -61,7 +67,7 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     .logo-text {
-        color: #1e90ff; 
+        color: #1e90ff;
         margin-left: 10px;
         font-weight: bold;
         font-size: 2.5rem;
@@ -118,219 +124,151 @@ with col2:
 tab1, tab2, tab3 = st.tabs(["🏠 Home", "⚙️ Settings", "❓ Help"])
 
 with tab1:
-    # Main card
     st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.subheader("Upload Your M3U8 File")
-    
-    # File uploader with better styling
-    m3u8_file = st.file_uploader("", type=["m3u8"], key="m3u8_uploader")
-    
-    if m3u8_file:
-        file_size = len(m3u8_file.getvalue()) / 1024  # Size in KB
-        st.markdown(f'<p class="file-info">File: {m3u8_file.name} ({file_size:.2f} KB)</p>', unsafe_allow_html=True)
-    
-    # Output options
-    st.subheader("Output Options")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        output_filename = st.text_input("Output Filename", 
-                                        value="video.mp4" if not m3u8_file else m3u8_file.name.replace(".m3u8", ".mp4"),
-                                        placeholder="Enter filename with .mp4 extension")
-    
-    with col2:
-        output_quality = st.select_slider("Video Quality", 
-                                         options=["Low", "Medium", "High", "Original"],
-                                         value="Original")
-    
-    # Download button
-    download_col1, download_col2, download_col3 = st.columns([1, 2, 1])
-    with download_col2:
-        download_button = st.button("Download Video", key="download_btn", use_container_width=True)
-    
-    # Process the download
-    if download_button and m3u8_file and output_filename:
-        # Save the uploaded m3u8 file to a temporary location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".m3u8") as tmp:
-            tmp.write(m3u8_file.getvalue())
-            m3u8_path = tmp.name
+    st.subheader("Upload Your M3U8 Files")
 
-        # Create progress components
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-        log_output = st.empty()
-        
-        # Determine quality settings based on selected option
-        quality_params = []
-        if output_quality != "Original":
-            if output_quality == "Low":
-                quality_params = ["-vf", "scale=640:-1"]
-            elif output_quality == "Medium":
-                quality_params = ["-vf", "scale=1280:-1"]
-            elif output_quality == "High":
-                quality_params = ["-vf", "scale=1920:-1"]
-        
-        # ffmpeg command to download video from m3u8
-        command = [
-            "ffmpeg",
-            "-protocol_whitelist", "file,http,https,tcp,tls",
-            "-i", m3u8_path,
-        ]
-        
-        # Add quality parameters if any
-        if quality_params:
-            command.extend(quality_params)
-            command.extend(["-c:v", "libx264", "-c:a", "aac"])
+    # Multiple file uploader
+    m3u8_files = st.file_uploader(
+        "Select one or more .m3u8 files",
+        type=["m3u8"],
+        accept_multiple_files=True,
+        key="m3u8_uploader"
+    )
+
+    # Output directory
+    output_dir = st.text_input(
+        "Download Directory",
+        value="./downloads",
+        help="Folder where converted videos will be saved"
+    )
+    if output_dir and not os.path.isdir(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        st.info(f"Created directory: {output_dir}")
+
+    # Video quality
+    output_quality = st.select_slider(
+        "Video Quality",
+        options=["Low", "Medium", "High", "Original"],
+        value="Original"
+    )
+
+    # Convert button
+    convert_all = st.button("Convert All Videos", use_container_width=True)
+
+    if convert_all:
+        if m3u8_files:
+            overall_progress = st.progress(0)
+            summary = []
+
+            for idx, m3u8_file in enumerate(m3u8_files, start=1):
+                # Save temp m3u8
+                input_path = os.path.join(output_dir, f"tmp_{idx}.m3u8")
+                with open(input_path, "wb") as f:
+                    f.write(m3u8_file.getvalue())
+
+                # Derive output file name
+                base = os.path.splitext(m3u8_file.name)[0]
+                output_path = os.path.join(output_dir, f"{base}.mp4")
+
+                # Build ffmpeg command
+                cmd = [
+                    "ffmpeg",
+                    "-protocol_whitelist", "file,http,https,tcp,tls",
+                    "-i", input_path,
+                ]
+                if output_quality != "Original":
+                    scale_map = {"Low": "640:-1", "Medium": "1280:-1", "High": "1920:-1"}
+                    cmd += ["-vf", f"scale={scale_map[output_quality]}", "-c:v", "libx264", "-c:a", "aac"]
+                else:
+                    cmd += ["-c", "copy"]
+                cmd.append(output_path)
+
+                # Run conversion
+                with st.spinner(f"Converting {m3u8_file.name}..."):
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode == 0:
+                    summary.append(f"✅ {m3u8_file.name} → {output_path}")
+                else:
+                    err = result.stderr.splitlines()[-1] if result.stderr else "Unknown error"
+                    summary.append(f"❌ {m3u8_file.name} failed: {err}")
+
+                # Clean up temp file
+                os.remove(input_path)
+
+                # Update progress
+                overall_progress.progress(idx / len(m3u8_files))
+
+            # Show summary
+            st.markdown("### Conversion Summary")
+            for line in summary:
+                st.markdown(line)
         else:
-            command.extend(["-c", "copy"])
-            
-        command.append(output_filename)
-        
-        # Run the command and capture output in real-time
-        progress_text.markdown('<p class="status-info">Starting download process...</p>', unsafe_allow_html=True)
-        
-        start_time = time.time()
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
+            st.warning("Please select at least one .m3u8 file first.")
 
-        output_lines = []
-        duration_seconds = None
-        current_time = 0
-        
-        for line in process.stdout:
-            output_lines.append(line)
-            
-            # Try to extract duration information
-            if "Duration:" in line and duration_seconds is None:
-                duration_str = line.split("Duration:")[1].split(",")[0].strip()
-                h, m, s = map(float, duration_str.split(':'))
-                duration_seconds = h * 3600 + m * 60 + s
-            
-            # Try to extract progress information
-            if "time=" in line:
-                time_str = line.split("time=")[1].split(" ")[0].strip()
-                h, m, s = map(float, time_str.split(':'))
-                current_time = h * 3600 + m * 60 + s
-                
-                if duration_seconds:
-                    progress = min(current_time / duration_seconds, 1.0)
-                    progress_bar.progress(progress)
-                    elapsed = time.time() - start_time
-                    estimated_total = elapsed / progress if progress > 0 else 0
-                    remaining = estimated_total - elapsed
-                    
-                    progress_text.markdown(
-                        f'<p class="status-info">Processing: {progress:.1%} complete '
-                        f'(ETA: {int(remaining//60)}m {int(remaining%60)}s)</p>', 
-                        unsafe_allow_html=True
-                    )
-            
-            # Show last few lines for feedback
-            log_output.markdown(f"""
-            ```
-            {''.join(output_lines[-5:])}
-            ```
-            """)
-
-        process.wait()
-
-        if process.returncode == 0:
-            progress_bar.progress(1.0)
-            progress_text.markdown('<p class="status-success">Download completed successfully!</p>', unsafe_allow_html=True)
-            
-            # Create download link
-            with open(output_filename, "rb") as file:
-                btn = st.download_button(
-                    label="Save Video to Computer",
-                    data=file,
-                    file_name=output_filename,
-                    mime="video/mp4"
-                )
-                
-            # Video preview
-            st.subheader("Video Preview")
-            st.video(output_filename)
-        else:
-            progress_text.markdown('<p class="status-error">Failed to download the video.</p>', unsafe_allow_html=True)
-            st.error("Check the log output above for specific errors.")
-
-        # Cleanup temp file
-        os.remove(m3u8_path)
-        
-    elif download_button:
-        st.warning("Please upload a .m3u8 file and enter an output filename.")
-    
     st.markdown('</div>', unsafe_allow_html=True)
 
 with tab2:
     st.markdown('<div class="custom-card">', unsafe_allow_html=True)
     st.subheader("Advanced Settings")
-    
+
     col1, col2 = st.columns(2)
-    
     with col1:
         ffmpeg_path = st.text_input("FFmpeg Path", value="ffmpeg", help="Path to the FFmpeg executable")
-        enable_hardware_accel = st.checkbox("Enable Hardware Acceleration", value=False, 
-                                          help="Use GPU for faster processing if available")
-    
+        enable_hardware_accel = st.checkbox("Enable Hardware Acceleration", value=False,
+                                            help="Use GPU for faster processing if available")
     with col2:
         download_dir = st.text_input("Download Directory", value="./", help="Where to save downloaded videos")
-        keep_temp_files = st.checkbox("Keep Temporary Files", value=False, 
-                                     help="Don't delete temporary files after processing")
-    
+        keep_temp_files = st.checkbox("Keep Temporary Files", value=False,
+                                      help="Don't delete temporary files after processing")
+
     st.markdown('</div>', unsafe_allow_html=True)
-    
+
     st.markdown('<div class="custom-card">', unsafe_allow_html=True)
     st.subheader("FFmpeg Command Customization")
-    custom_args = st.text_area("Additional FFmpeg Arguments", 
-                              help="Add custom FFmpeg arguments separated by spaces")
+    custom_args = st.text_area("Additional FFmpeg Arguments", help="Add custom FFmpeg arguments separated by spaces")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with tab3:
     st.markdown('<div class="custom-card">', unsafe_allow_html=True)
     st.subheader("How to Use StreamGrab")
-    
+
     st.markdown("""
-    1. **Upload your .m3u8 file** using the file uploader on the Home tab
-    2. **Set the output filename** for the downloaded video (must end with .mp4)
-    3. **Choose your preferred quality** setting
-    4. **Click the Download button** to start the download process
-    5. **Wait for the process to complete** - you can monitor progress in real-time
-    6. **Save the video** to your computer when complete
+    1. **Upload your .m3u8 files** using the file uploader on the Home tab  
+    2. **Set the download directory** where videos will be saved  
+    3. **Choose your preferred quality** setting  
+    4. **Click the Convert All Videos button** to start sequential conversion  
+    5. **Wait for the process to complete** - you can monitor progress in real-time  
+    6. **Find your videos** in the specified download folder
     """)
-    
+
     st.markdown('<div style="margin-top: 20px;"></div>', unsafe_allow_html=True)
-    
+
     st.subheader("Troubleshooting")
-    
     st.markdown("""
-    - **Error: FFmpeg not found** - Make sure FFmpeg is installed on your system and available in your PATH
-    - **Failed to download** - Check if the M3U8 URL is valid and accessible
-    - **No audio in output** - The stream might not contain audio, or try changing quality settings
-    - **Slow download speed** - Consider using hardware acceleration in Settings tab if available
+    - **Error: FFmpeg not found** - Make sure FFmpeg is installed on your system and available in your PATH  
+    - **Failed to convert** - Check if the M3U8 file is valid and accessible  
+    - **No audio in output** - The stream might not contain an audio track  
+    - **Slow conversion** - Consider using the hardware acceleration option in Settings
     """)
-    
+
     st.markdown('<div style="margin-top: 20px;"></div>', unsafe_allow_html=True)
-    
+
     expander = st.expander("About M3U8 Files")
     expander.markdown("""
-    M3U8 files are playlist files used for streaming media. They contain URLs to media segments 
-    and are commonly used in HTTP Live Streaming (HLS), a protocol developed by Apple for 
+    M3U8 files are playlist files used for streaming media. They contain URLs to media segments  
+    and are commonly used in HTTP Live Streaming (HLS), a protocol developed by Apple for  
     streaming audio and video over HTTP.
-    
-    This application helps you download and combine these segments into a single video file
+
+    This application helps you download and combine these segments into a single video file  
     for offline viewing.
     """)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # Footer
 st.markdown(
-    '<div class="footer">StreamGrab v1.0.0 | © ' + 
-    str(datetime.now().year) + 
-    ' | Made with ❤️ for streamers and viewers</div>', 
+    '<div class="footer">StreamGrab v1.0.0 | © ' +
+    str(datetime.now().year) +
+    ' | Made with ❤️ for streamers and viewers</div>',
     unsafe_allow_html=True
 )
